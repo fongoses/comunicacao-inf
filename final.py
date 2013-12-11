@@ -2,10 +2,15 @@
 import math
 import os
 import random
+import reedsolomon
 import sys
 import zlib
 
 
+
+#CONSTANTES
+DEBUG = 0
+PLOT = 1
 
 #FUNCOES/VARS AUXILIARES
 
@@ -50,11 +55,11 @@ def geraTemposGnuplot(nAmplitudes):
     return tempos
 
 
-def exibeGnuplot(pathArquivoDeDados,stringOriginal,title,amplitudeMinima,amplitudeMaxima):  
-    os.system("gnuplot -persist -e \"set grid x2tics;set x2tics 1 format \'\' scale 0;set xtics 1;set xrange [0:"+str(len(stringOriginal))+"]; set yrange ["+amplitudeMinima+":"+amplitudeMaxima+"]; plot \'"+pathArquivoDeDados+"\' linecolor rgb \'blue\'with lines title \'"+title+" para string de bits "+stringOriginal+"\'\"") 
+def exibeGnuplot(pathArquivoDeDados,stringOriginal,title,amplitudeMinima,amplitudeMaxima):    
+    os.system("gnuplot -persist -e \"set grid x2tics;set x2tics 1 format '' scale 0;set xtics 1; plot '"+pathArquivoDeDados+"' linecolor rgb 'blue' with lines title '"+title+" para string de bits "+stringOriginal+"'\"") 
 
 def exibeSinalModuladoGnuplot(pathArquivoDeDados,nAmostras,titulo):  
-    os.system("gnuplot -persist -e \"set grid x2tics;set x2tics 100 format \'\' scale 0;set xtics 100;set xrange[0:"+str(nAmostras)+"] ;plot '"+pathArquivoDeDados+"' with lines title '"+titulo+"' \"") 
+    os.system("gnuplot -persist -e \"set grid x2tics;set x2tics 100 format '' scale 0;set xtics 100;set xrange[0:"+str(nAmostras)+"] ;plot '"+pathArquivoDeDados+"' with lines title '"+titulo+"' \"") 
 
 
 def amplitudesDiscretasToIntervalos(amplitudes):
@@ -147,8 +152,42 @@ def bitStringToByteString(stringBits):
     return byteString
 
 
+
+
+def fecEncode(stringDados):
+    '''
+        Utilizando Codificacao Reed Solomon.
+        Entrada: String de dados provenientes do codificador de fonte
+        Saida: String com os dados originais juntamente com a redundancia do Reed Solomon
+
+    '''
+    
+    mRS = reedsolomon.ReedSolomon()
+    dadoCodificado = mRS.RSEncode(stringDados,len(stringDados))
+    return "".join(map(chr,dadoCodificado))
+
+def fecDecode(stringDadosCodificados):
+    '''
+        Processo reverso ao fecEncode()
+    '''    
+
+    mRS = reedsolomon.ReedSolomon()
+    dadosCodificados = map(ord,stringDadosCodificados)
+    dadosDecodificados = mRS.RSDecode(dadosCodificados,len(dadosCodificados)/2)
+
+    if(not dadosDecodificados):
+        if DEBUG:
+            print 'Nao foi possivel corrigir erros'
+        return ''
+
+    else:
+        return "".join(map(chr,dadosDecodificados[:len(dadosDecodificados)/2]))  
+
+
+
+
 def codificadorLinha(bitString):
-    #NRZ
+    #nrz
 
     i=0
     ampl=[]
@@ -183,7 +222,6 @@ def decodificadorLinha(Amplitudes):
 
 def codificadorCanal(amplitudesCodificadorLinha):
     amplitudesCanal=amplitudesCodificadorLinha
-
     return amplitudesCanal
 
 
@@ -261,6 +299,22 @@ def fasesToAmostrasBpsk(constelacao):
     
     return amostras
 
+def heuristica(valorAmostra):
+
+
+    if valorAmostra>AMPLITUDE_1:
+	    return AMPLITUDE_1
+
+    if valorAmostra< AMPLITUDE_1 /2 and valorAmostra > 0:
+	    return 0
+
+    if valorAmostra<AMPLITUDE_0:
+	    return AMPLITUDE_0
+
+    if valorAmostra> AMPLITUDE_0 /2 and valorAmostra < 0:
+	    return 0
+
+    return valorAmostra
 
 def obtemFaseAmostra(amostra):
     '''
@@ -268,8 +322,7 @@ def obtemFaseAmostra(amostra):
         geraAmostrasBpsk(...)
 
     '''
-    i=0
-    
+    i=0   
     
     cristaEsquerda=amostra[0:50]
     cristaDireita=amostra[50:100]
@@ -278,34 +331,20 @@ def obtemFaseAmostra(amostra):
 
     #corrige ruido
     for a in cristaEsquerda:
-        if a>AMPLITUDE_1:
-            a=AMPLITUDE_1
-
-        if a<AMPLITUDE_0:
-            a=AMPLITUDE_0
-
-        somaEsq+=a
-
-
+        somaEsq+=heuristica(a)
 
     for a in cristaDireita:
-        if a>AMPLITUDE_1:
-            a=AMPLITUDE_1
-
-        if a<AMPLITUDE_0:
-            a=AMPLITUDE_0
-
-        somaDir+=a
-
-
+        somaDir+=heuristica(a)
 
     if somaEsq < somaDir:
         return FASE_180
     else: return FASE_0
 
 
-def ruidoNosso():    
-    return random.uniform(AMPLITUDE_0*10,-AMPLITUDE_0*10)
+def ruidoNosso():  
+    multiplicador=2.75
+    #multiplicador=10
+    return random.uniform(AMPLITUDE_0*multiplicador,-AMPLITUDE_0*multiplicador)
 
 def ruidoGaussiano():
     print 'gaussiano'
@@ -323,8 +362,6 @@ def amostrasToFasesBpsk(amostras):
 
     return fases
 
-
-
 def ruido(amostras):
     '''
         Dado um conjunto de amostras,
@@ -340,10 +377,11 @@ def ruido(amostras):
 
 
 
-def ber(bitsRecebidos,bitsEnviados):
+def ber(bitsRecebidos,bitsEnviados):    
     if(len(bitsRecebidos) != len(bitsEnviados)):
-        print "Erro: bitsEnviados de tamanhos diferentes"
-        sys.exit(3)
+        if DEBUG:
+            print "Erro: bitsEnviados de tamanhos diferentes"
+        return 1
 
     nBitsErrados=0
 
@@ -351,15 +389,19 @@ def ber(bitsRecebidos,bitsEnviados):
         if bitsRecebidos[i] != bitsEnviados[i]:
             nBitsErrados+=1
 
-    #AJUSTAR BER: VER FUNCAO PARA DETERMINAR DIFERENCA ENTRE DUAS STRINGS
-    print 'Bits Errados:',nBitsErrados,len(bitsRecebidos)
+    
+    #if DEBUG:
+    print 'Bits Errados:',nBitsErrados, '/',len(bitsRecebidos)
+    
     return float(nBitsErrados)/len(bitsRecebidos)
+
+
 
 ###################################################
 #Programa principal
 
 #fonte de informacao
-PATH_ARQUIVO_FONTE_INFORMACAO = "./fonte.txt"
+PATH_ARQUIVO_FONTE_INFORMACAO = "./fonte3.txt"
 arquivoFonteInformacao = open(PATH_ARQUIVO_FONTE_INFORMACAO,'r')
 
 
@@ -369,28 +411,40 @@ arquivoFonteInformacao = open(PATH_ARQUIVO_FONTE_INFORMACAO,'r')
 
 #leitura da fonte: arquivo texto
 fonteInformacao=leFonte(arquivoFonteInformacao)
-print ">Fonte de Informacao<\n",fonteInformacao
-print "Tamanho da fonte de informacao:",len(fonteInformacao),'bytes\n'
+if DEBUG:
+    print ">Fonte de Informacao<\n",fonteInformacao
+    print "Tamanho da fonte de informacao:",len(fonteInformacao),'bytes\n'
 
 #codificacao da fonte: ZIP
-textoZip = codificadorFonte(fonteInformacao);
-print ">Texto codificado(zip)<\n:",textoZip
-print "Tamanho do texto codificado:",len(textoZip),'bytes\n'
+textoZip = codificadorFonte(fonteInformacao)
+#textoZip = 'MASDFGHIJKL'
+if DEBUG:
+    print ">Texto codificado(zip)<\n:",textoZip
+    print "Tamanho do texto codificado:",len(textoZip),'bytes\n'
 
+#FEC: Reed Solomon
+if DEBUG:
+    print ">Codificacao FEC(ReedSolomon)<\n"
+stringSolomon = fecEncode(textoZip)
 
 #codificador linha: NRZ
-print ">Codificacao NRZ<\n"
-bitString=byteStringToBitString(textoZip) #intermediario entre codificador de fonte e de linha: transformador de bytes codificados para bits
+if DEBUG:
+    print ">Codificacao NRZ<\n"
+
+bitString=byteStringToBitString(stringSolomon) #intermediario entre codificador de fonte e de linha: transformador de bytes codificados para bits
 amplitudesNrz=codificadorLinha(bitString)
 tempoNrz = geraTemposGnuplot(len(bitString))
 
-print '-Bits\n',bitString,'\n','Total de bits: ',len(bitString),'\n'
-print '-NRZ Voltagens por Intervalo de Tempo\n',amplitudesNrz,'\n','Total de voltagens: ',len(amplitudesNrz),'\n'
+if DEBUG:
+    print '-Bits\n',bitString,'\n','Total de bits: ',len(bitString),'\n'
+    print '-NRZ Voltagens por Intervalo de Tempo\n',amplitudesNrz,'\n','Total de voltagens: ',len(amplitudesNrz),'\n'
 
 
 #plot do NRZ
-salvaDadosArquivo(arquivoTemporarioNrz,tempoNrz[:10*4],intervalosToAmplitudesDiscretas(amplitudesNrz)[:10*4]) #plot NRT
-exibeGnuplot(PATH_ARQUIVO_TEMPORARIO_NRZ,bitString[:10],"NRZ Bipolar",str(min(AMPLITUDE_0_NRZ)),str(max(AMPLITUDE_1_NRZ)+1)) #plot
+if PLOT:
+    salvaDadosArquivo(arquivoTemporarioNrz,tempoNrz[:10*4],intervalosToAmplitudesDiscretas(amplitudesNrz)[:10*4]) #plot NRT
+    arquivoTemporarioNrz.close()
+    exibeGnuplot(PATH_ARQUIVO_TEMPORARIO_NRZ,bitString[:10],"NRZ Bipolar",str(min(AMPLITUDE_0_NRZ)),str(max(AMPLITUDE_1_NRZ)+1)) #plot
 
 #codificador canal: paridade (TO DO later)
 amplitudesCodificadorCanal = amplitudesNrz
@@ -398,63 +452,91 @@ amplitudesCodificadorCanal = amplitudesNrz
 #modulador BPSK. 2 Etapas: Constelacao e Amostragem
 constelacao = moduladorBpsk(amplitudesCodificadorCanal)
 
-print ">Modulacao<\n"
-print "-Constelacao:\n", constelacao,'\n'
+if DEBUG:
+    print ">Modulacao<\n"
+    print "-Constelacao:\n", constelacao,'\n'
 #print '-Amostras:\n'
 amostras = fasesToAmostrasBpsk(constelacao)
-arquivoTemporarioAmostras.write(str(amostras[:1000]).replace('[','').replace(',','\n').replace(']',''))
-exibeSinalModuladoGnuplot(PATH_ARQUIVO_TEMPORARIO_AMOSTRAS,len(amostras[:1000]),'Sinal Modulado BPSK')
 
-print '>Ruido<\n'
+if PLOT:
+    arquivoTemporarioAmostras.write(str(amostras[:1000]).replace('[','').replace(',','\n').replace(']',''))
+    exibeSinalModuladoGnuplot(PATH_ARQUIVO_TEMPORARIO_AMOSTRAS,len(amostras[:1000]),'Sinal Modulado BPSK')
+
+if DEBUG:
+    print '>Ruido<\n'
 amostrasRuidosas=ruido(amostras)
-arquivoTemporarioAmostrasRuidosas.write(str(amostrasRuidosas[:1000]).replace('[','').replace(',','\n').replace(']',''))
-exibeSinalModuladoGnuplot(PATH_ARQUIVO_TEMPORARIO_AMOSTRAS_RUIDOSAS,len(amostrasRuidosas[:1000]),'Sinal Modulado BPSK Com Ruido')
 
-
-print '>Ber<\n'
-
+if PLOT:
+    arquivoTemporarioAmostrasRuidosas.write(str(amostrasRuidosas[:1000]).replace('[','').replace(',','\n').replace(']',''))
+    exibeSinalModuladoGnuplot(PATH_ARQUIVO_TEMPORARIO_AMOSTRAS_RUIDOSAS,len(amostrasRuidosas[:1000]),'Sinal Modulado BPSK Com Ruido')
 
 
 
 
 #RECEPCAO
 
-
-
 #demodulador
 recConstelacao = amostrasToFasesBpsk(amostrasRuidosas)
-recAmostras=fasesToAmostrasBpsk(recConstelacao)
-arquivoTemporarioAmostrasRecuperadas.write(str(recAmostras[:1000]).replace('[','').replace(',','\n').replace(']',''))
-exibeSinalModuladoGnuplot(PATH_ARQUIVO_TEMPORARIO_AMOSTRAS_RECUPERADAS,len(recAmostras[:1000]),'Sinal Demodulado BPSK')
-#recAmplitudesCanal=demoduladorBpsk(recConstelacao)
-recAmplitudesCanal=demoduladorBpsk(constelacao)
-print '>Demodulacao<\n'
-print 'Amostras apos demodulacao(simbolos da constelacao):\n',recConstelacao,'\n'
-print 'Numero de simbolos recebidos:\n',len(recConstelacao),'\n'
+recAmostras=fasesToAmostrasBpsk(recConstelacao) #plot das amostras recuperadas
 
-print 'Demodulacao dos simbolos recebidos para niveis no codificador de canal\n',recAmplitudesCanal,'\n'
-print 'Total de niveis recebidos: ',len(recAmplitudesCanal),'\n'
+if PLOT:
+    arquivoTemporarioAmostrasRecuperadas.write(str(recAmostras[:1000]).replace('[','').replace(',','\n').replace(']',''))
+    exibeSinalModuladoGnuplot(PATH_ARQUIVO_TEMPORARIO_AMOSTRAS_RECUPERADAS,len(recAmostras[:1000]),'Sinal Demodulado BPSK')
+#recAmplitudesCanal=demoduladorBpsk(recConstelacao)
+recAmplitudesCanal=demoduladorBpsk(recConstelacao)
+if DEBUG:
+    print '>Demodulacao<\n'
+    print 'Amostras apos demodulacao(simbolos da constelacao):\n',recConstelacao,'\n'
+    print 'Numero de simbolos recebidos:\n',len(recConstelacao),'\n'
+
+    print 'Demodulacao dos simbolos recebidos para niveis no codificador de canal\n',recAmplitudesCanal,'\n'
+    print 'Total de niveis recebidos: ',len(recAmplitudesCanal),'\n'
 
 #decodificador canal: (TO DO)
 recAmplitudesNrz=decodificadorCanal(recAmplitudesCanal)
-print '>Decodificacao de niveis no canal, para niveis na codificacao de linha<\n',recAmplitudesNrz
-print 'Total de niveis de codificacao de linha(NRZ):\n',len(recAmplitudesNrz)
+if DEBUG:
+    print '>Decodificacao de niveis no canal, para niveis na codificacao de linha<\n',recAmplitudesNrz
+    print 'Total de niveis de codificacao de linha(NRZ):\n',len(recAmplitudesNrz)
 
 
 #decodificador linha: NRZ
 recBits = decodificadorLinha(recAmplitudesNrz)
-recTextoZip = bitStringToByteString(recBits) #intermediario entre codificador de linha e codificador de fonte
-print '>Decodificacao NRZ<\n'
-print '-Bits:\n',recBits,'\nTotal de bits recebidos: ',len(recBits),'\n'
-print '-Dados:\n',recTextoZip,'\nTotal de dados recebidos: ',len(recTextoZip),' bytes\n'
+
+
+recStringSolomon = bitStringToByteString(recBits) #intermediario entre codificador de linha e codificador de fonte
+if DEBUG:
+    print '>Decodificacao NRZ<\n'
+    print '-Dados Reed Solomon:\n',recStringSolomon
+    print 'Bits:\n',recBits,'\nTotal de bits recebidos: ',len(recBits),'\n'
 
 #ber
-print 'BER:\n',ber(recBits,bitString)*100,'%'
+print '>BER Canal<\n *Canal: ',ber(recBits,bitString)*100,'%'
 
+
+#FEC
+recTextoZip = fecDecode(recStringSolomon)
+if DEBUG:
+    print ">Decodificacao FEC<\n"
+    #print recTextoZip #remover essa linha
+
+
+print '>BER Apos Reed Solomon<\n *RS:',ber(byteStringToBitString(recTextoZip),byteStringToBitString(textoZip))*100,'%'
 
 #decodificador fonte
-textoDecodificado=decodificadorFonte(recTextoZip)
-print "Decodificador Fonte\n",textoDecodificado
-print "Tamanho do texto decodificado:",len(textoDecodificado)
+try:
+    textoDecodificado=decodificadorFonte(recTextoZip)
+except:
+    print 'Dados corrompidos'
+    sys.exit(3)
+#textoDecodificado=recTextoZip #remover essa linha e descomentar a acima
 
+if DEBUG:
+    print "Decodificador Fonte\n",textoDecodificado
+    print "Tamanho do texto decodificado:",len(textoDecodificado)
+
+print 'Dados recebidos com sucesso.'
+
+arquivoFonteInformacao.close()
+arquivoTemporarioAmostras.close()
+arquivoTemporarioNrz.close()
 
