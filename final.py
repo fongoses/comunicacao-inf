@@ -517,7 +517,7 @@ print '>BER Canal<\n *Canal: ',ber(recBits,bitString)*100,'%'
 recTextoZip = fecDecode(recStringSolomon)
 if DEBUG:
     print ">Decodificacao FEC<\n"
-    #print recTextoZip #remover essa linha
+    #print recTextoZip
 
 
 print '>BER Apos Reed Solomon<\n *RS:',ber(byteStringToBitString(recTextoZip),byteStringToBitString(textoZip))*100,'%'
